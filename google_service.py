@@ -21,11 +21,18 @@ class GoogleSheetsService:
     
     HEADER_ROW = ["Date", "Category", "Amount", "Comment", "User ID"]
     
+    MONTH_NAMES = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+    
     def __init__(self):
         """Initialize Google Sheets service with credentials."""
         self.client = None
         self.sheet = None
         self.worksheet = None
+        self._current_month_key = None
         self._connect()
     
     def _connect(self) -> None:
@@ -51,17 +58,41 @@ class GoogleSheetsService:
         try:
             # Try to open existing spreadsheet
             self.sheet = self.client.open(Config.GOOGLE_SHEET_NAME)
-            self.worksheet = self.sheet.sheet1
-            
-            # Check if header exists
-            if not self.worksheet.row_values(1):
-                self.worksheet.append_row(self.HEADER_ROW)
         except gspread.SpreadsheetNotFound:
             # Create new spreadsheet
             self.sheet = self.client.create(Config.GOOGLE_SHEET_NAME)
-            self.worksheet = self.sheet.sheet1
-            self.worksheet.append_row(self.HEADER_ROW)
             print(f"Created new spreadsheet: {Config.GOOGLE_SHEET_NAME}")
+        
+        # Set worksheet to current month
+        self._get_or_create_monthly_worksheet()
+    
+    def _get_month_sheet_name(self, date: Optional[datetime] = None) -> str:
+        """Get worksheet name for a given month (e.g., 'December 2025')."""
+        if date is None:
+            date = datetime.now()
+        month_name = self.MONTH_NAMES[date.month]
+        return f"{month_name} {date.year}"
+    
+    def _get_or_create_monthly_worksheet(self, date: Optional[datetime] = None) -> None:
+        """Get or create worksheet for the specified month."""
+        sheet_name = self._get_month_sheet_name(date)
+        
+        try:
+            # Try to get existing worksheet
+            self.worksheet = self.sheet.worksheet(sheet_name)
+        except gspread.WorksheetNotFound:
+            # Create new worksheet for this month
+            self.worksheet = self.sheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+            self.worksheet.append_row(self.HEADER_ROW)
+            print(f"Created new monthly worksheet: {sheet_name}")
+        
+        self._current_month_key = sheet_name
+    
+    def _ensure_current_month_worksheet(self) -> None:
+        """Ensure we're using the current month's worksheet."""
+        current_month_key = self._get_month_sheet_name()
+        if self._current_month_key != current_month_key:
+            self._get_or_create_monthly_worksheet()
     
     def add_expense(self, expense: ExpenseInput) -> bool:
         """
@@ -74,6 +105,8 @@ class GoogleSheetsService:
             bool: True if successful, False otherwise
         """
         try:
+            # Ensure we're using current month's worksheet
+            self._ensure_current_month_worksheet()
             row = expense.to_sheet_row()
             self.worksheet.append_row(row)
             return True
@@ -81,16 +114,30 @@ class GoogleSheetsService:
             print(f"Error adding expense: {e}")
             return False
     
-    def get_all_records(self) -> List[Dict]:
+    def get_all_records(self, current_month_only: bool = True) -> List[Dict]:
         """
         Fetch all expense records from the sheet.
         
+        Args:
+            current_month_only: If True, only get records from current month's worksheet
+            
         Returns:
             List of dictionaries containing expense records
         """
         try:
-            records = self.worksheet.get_all_records()
-            return records
+            if current_month_only:
+                self._ensure_current_month_worksheet()
+                return self.worksheet.get_all_records()
+            else:
+                # Get records from all monthly worksheets
+                all_records = []
+                for ws in self.sheet.worksheets():
+                    try:
+                        records = ws.get_all_records()
+                        all_records.extend(records)
+                    except Exception:
+                        continue
+                return all_records
         except Exception as e:
             print(f"Error fetching records: {e}")
             return []
