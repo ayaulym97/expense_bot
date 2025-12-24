@@ -60,7 +60,7 @@ async def cmd_start(message: Message) -> None:
         "<b>Examples:</b>\n"
         "• <code>food 2500 coffee at Starbucks</code>\n"
         "• <code>transport 500 taxi</code>\n"
-        "• <code>shopping 15000 new shoes</code>\n\n"
+        "• <code>24.12 shopping 15000 new shoes</code> (with date)\n\n"
         "You can also send just a number, and I'll ask for the category.\n\n"
         "<b>Available commands:</b>\n"
         "/start - Show this message\n"
@@ -88,9 +88,12 @@ async def cmd_help(message: Message) -> None:
         "📖 <b>How to use Expense Tracker Bot</b>\n\n"
         "<b>Adding expenses:</b>\n"
         "Format: <code>category amount comment</code>\n\n"
+        "<b>With date:</b>\n"
+        "Format: <code>DD.MM category amount comment</code>\n\n"
         "<b>Examples:</b>\n"
         "✅ <code>food 2500 lunch</code>\n"
         "✅ <code>transport 300</code>\n"
+        "✅ <code>24.12 food 500 coffee</code> (with date)\n"
         "✅ <code>2500</code> (I'll ask for category)\n\n"
         "<b>Common categories:</b>\n"
         "food, transport, entertainment, shopping, health, utilities, education, other\n\n"
@@ -284,12 +287,18 @@ async def process_expense(message: Message, state: FSMContext) -> None:
         
         # Case 2: Category and amount provided
         if parsed.category and parsed.amount:
-            expense = ExpenseInput(
-                category=parsed.category,
-                amount=parsed.amount,
-                comment=parsed.comment,
-                user_id=message.from_user.id
-            )
+            # Use parsed date or default to now
+            expense_date = parsed.date if parsed.date else None
+            expense_kwargs = {
+                'category': parsed.category,
+                'amount': parsed.amount,
+                'comment': parsed.comment,
+                'user_id': message.from_user.id
+            }
+            if expense_date:
+                expense_kwargs['date'] = expense_date
+            
+            expense = ExpenseInput(**expense_kwargs)
             
             # Save to Google Sheets
             success = sheets_service.add_expense(expense)
@@ -300,6 +309,8 @@ async def process_expense(message: Message, state: FSMContext) -> None:
                     f"Category: <b>{expense.category}</b>\n"
                     f"Amount: <b>{expense.amount:.2f}</b>"
                 )
+                if expense_date:
+                    response += f"\nDate: <b>{expense.date.strftime('%d.%m.%Y')}</b>"
                 if expense.comment:
                     response += f"\nComment: {expense.comment}"
                 
