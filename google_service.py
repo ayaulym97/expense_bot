@@ -88,30 +88,59 @@ class GoogleSheetsService:
         
         self._current_month_key = sheet_name
     
-    def _ensure_current_month_worksheet(self) -> None:
-        """Ensure we're using the current month's worksheet."""
-        current_month_key = self._get_month_sheet_name()
-        if self._current_month_key != current_month_key:
-            self._get_or_create_monthly_worksheet()
+    def _ensure_worksheet_for_date(self, date: Optional[datetime] = None) -> None:
+        """Ensure worksheet exists for the given date, always checking the sheet."""
+        sheet_name = self._get_month_sheet_name(date)
+        
+        # Always verify worksheet exists (it could have been deleted)
+        try:
+            self.worksheet = self.sheet.worksheet(sheet_name)
+        except gspread.WorksheetNotFound:
+            # Create new worksheet for this month
+            self.worksheet = self.sheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+            self.worksheet.append_row(self.HEADER_ROW)
+            print(f"Created new monthly worksheet: {sheet_name}")
+        
+        self._current_month_key = sheet_name
     
-    def add_expense(self, expense: ExpenseInput) -> bool:
+    def _reconnect(self) -> None:
+        """Reconnect to Google Sheets if connection was lost."""
+        try:
+            print("Reconnecting to Google Sheets...")
+            self._connect()
+            print("Reconnected successfully")
+        except Exception as e:
+            print(f"Failed to reconnect: {e}")
+            raise
+    
+    def add_expense(self, expense: ExpenseInput, retry: bool = True) -> bool:
         """
         Add a new expense record to the spreadsheet.
         
         Args:
             expense: ExpenseInput object containing expense data
+            retry: Whether to retry on connection error
             
         Returns:
             bool: True if successful, False otherwise
         """
         try:
-            # Ensure we're using current month's worksheet
-            self._ensure_current_month_worksheet()
+            # Ensure worksheet exists for expense date (always verify, sheet could be deleted)
+            self._ensure_worksheet_for_date(expense.date)
             row = expense.to_sheet_row()
             self.worksheet.append_row(row)
             return True
+        except (ConnectionResetError, ConnectionError, OSError) as e:
+            print(f"Connection error adding expense: {e}")
+            if retry:
+                self._reconnect()
+                return self.add_expense(expense, retry=False)
+            return False
         except Exception as e:
             print(f"Error adding expense: {e}")
+            if retry and "Connection" in str(e):
+                self._reconnect()
+                return self.add_expense(expense, retry=False)
             return False
     
     def get_all_records(self, current_month_only: bool = True) -> List[Dict]:
